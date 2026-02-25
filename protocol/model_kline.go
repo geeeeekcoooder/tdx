@@ -241,76 +241,64 @@ func FixKlineTime(ks []*Kline) []*Kline {
 type Klines []*Kline
 
 // MA 均线
-func (ks Klines) MA(n int) []Price {
-	out := make([]Price, len(ks))
-	var sum int64
-
-	for i := 0; i < len(ks); i++ {
-		sum += int64(ks[i].Close)
-
-		if i >= n {
-			sum -= int64(ks[i-n].Close)
-		}
-
-		if i >= n-1 {
-			out[i] = Price(sum / int64(n))
-		}
+func (ks Klines) MA(n int) Price {
+	if len(ks) < n {
+		return 0
 	}
-	return out
+	sum := Price(0)
+	// 取最后n个
+	for _, k := range ks[len(ks)-n:] {
+		sum += k.Close
+	}
+	return sum / Price(n)
 }
 
 // EMA MACD的基础
-func (ks Klines) EMA(n int) []Price {
-	out := make([]Price, len(ks))
-	if len(ks) == 0 {
-		return out
+func (ks Klines) EMA(n int) Price {
+	if len(ks) == 0 || n <= 0 {
+		return 0
 	}
 
-	out[0] = ks[0].Close
+	ema := ks[0].Close
 	den := int64(n + 1)
 	num := int64(2)
 
 	for i := 1; i < len(ks); i++ {
-		out[i] = Price(
-			(int64(ks[i].Close)*num + int64(out[i-1])*(den-num)) / den,
-		)
+		ema = Price((int64(ks[i].Close)*num + int64(ema)*(den-num)) / den)
 	}
-	return out
+	return ema
 }
 
 // MACD 常用于短线核心
-func (ks Klines) MACD() (dif, dea, hist []Price) {
-	ema12 := ks.EMA(12)
-	ema26 := ks.EMA(26)
-
-	n := len(ks)
-	dif = make([]Price, n)
-	for i := 0; i < n; i++ {
-		dif[i] = ema12[i] - ema26[i]
+func (ks Klines) MACD() (dif, dea, hist Price) {
+	if len(ks) == 0 {
+		return 0, 0, 0
 	}
 
-	dea = make([]Price, n)
-	dea[0] = dif[0]
-
-	// DEA = EMA(dif, 9)
-	den := int64(10)
+	ema12 := ks[0].Close
+	ema26 := ks[0].Close
+	den12 := int64(13)
+	den26 := int64(27)
+	denDea := int64(10)
 	num := int64(2)
 
-	for i := 1; i < n; i++ {
-		dea[i] = Price((int64(dif[i])*num + int64(dea[i-1])*(den-num)) / den)
+	for i := 1; i < len(ks); i++ {
+		ema12 = Price((int64(ks[i].Close)*num + int64(ema12)*(den12-num)) / den12)
+		ema26 = Price((int64(ks[i].Close)*num + int64(ema26)*(den26-num)) / den26)
+		dif = ema12 - ema26
+		dea = Price((int64(dif)*num + int64(dea)*(denDea-num)) / denDea)
+		hist = (dif - dea) * 2
 	}
-
-	hist = make([]Price, n)
-	for i := 0; i < n; i++ {
-		hist[i] = (dif[i] - dea[i]) * 2
-	}
-	return
+	return dif, dea, hist
 }
 
 // RSI 常用于超买超卖
-func (ks Klines) RSI(n int) []int64 {
-	out := make([]int64, len(ks))
+func (ks Klines) RSI(n int) int64 {
+	if len(ks) == 0 || n <= 0 {
+		return 0
+	}
 	var gain, loss int64
+	var rsi int64
 
 	for i := 1; i < len(ks); i++ {
 		diff := int64(ks[i].Close - ks[i-1].Close)
@@ -321,7 +309,7 @@ func (ks Klines) RSI(n int) []int64 {
 			loss -= diff
 		}
 
-		if i >= n {
+		if i >= n+1 {
 			prev := int64(ks[i-n].Close - ks[i-n-1].Close)
 			if prev > 0 {
 				gain -= prev
@@ -331,36 +319,37 @@ func (ks Klines) RSI(n int) []int64 {
 		}
 
 		if i >= n && loss > 0 {
-			out[i] = 100 * gain / (gain + loss)
+			rsi = 100 * gain / (gain + loss)
 		}
 	}
-	return out
+	return rsi
 }
 
 // BOLL 布林带（洗盘神器）
-func (ks Klines) BOLL(n int) (upper, mid, lower []Price) {
-	mid = ks.MA(n)
-	upper = make([]Price, len(ks))
-	lower = make([]Price, len(ks))
-
-	for i := n - 1; i < len(ks); i++ {
-		var sum int64
-		for j := i - n + 1; j <= i; j++ {
-			d := int64(ks[j].Close - mid[i])
-			sum += d * d
-		}
-
-		std := I64Sqrt(sum / int64(n))
-		upper[i] = mid[i] + Price(std*2)
-		lower[i] = mid[i] - Price(std*2)
+func (ks Klines) BOLL(n int) (upper, mid, lower Price) {
+	if len(ks) < n || n <= 0 {
+		return 0, 0, 0
 	}
-	return
+
+	mid = ks.MA(n)
+	var sum int64
+	for _, k := range ks[len(ks)-n:] {
+		d := int64(k.Close - mid)
+		sum += d * d
+	}
+	std := I64Sqrt(sum / int64(n))
+	upper = mid + Price(std*2)
+	lower = mid - Price(std*2)
+	return upper, mid, lower
 }
 
 // ATR 常用于判断是否该止损
-func (ks Klines) ATR(n int) []Price {
-	out := make([]Price, len(ks))
+func (ks Klines) ATR(n int) Price {
+	if len(ks) == 0 || n <= 0 {
+		return 0
+	}
 	var sum int64
+	var atr Price
 
 	for i := 1; i < len(ks); i++ {
 		h := ks[i].High
@@ -374,24 +363,27 @@ func (ks Klines) ATR(n int) []Price {
 			prev := max(ks[i-n+1].High-ks[i-n+1].Low,
 				max((ks[i-n+1].High-ks[i-n].Close).Abs(), (ks[i-n+1].Low-ks[i-n].Close).Abs()))
 			sum -= int64(prev)
-			out[i] = Price(sum / int64(n))
+			atr = Price(sum / int64(n))
 		}
 	}
-	return out
+	return atr
 }
 
-func (ks Klines) VWAP() []Price {
-	out := make([]Price, len(ks))
+func (ks Klines) VWAP() Price {
+	if len(ks) == 0 {
+		return 0
+	}
 	var volSum, amtSum int64
+	var vwap Price
 
 	for i := 0; i < len(ks); i++ {
 		volSum += ks[i].Volume
 		amtSum += int64(ks[i].Amount)
 		if volSum > 0 {
-			out[i] = Price(amtSum / volSum)
+			vwap = Price(amtSum / volSum)
 		}
 	}
-	return out
+	return vwap
 }
 
 // LastPrice 获取最后一个K线的收盘价
